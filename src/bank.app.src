@@ -1,5 +1,5 @@
 {application, bank,
- [{description, "An OTP application"},
+ [{description, "Bank OTP application"},
   {vsn, "0.1.0"},
   {registered, []},
   {mod, {bank_app, []}},
