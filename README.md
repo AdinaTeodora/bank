@@ -22,15 +22,56 @@ Use chmod to make it executable, then add it to your environment variable PATH:
     chmod +x rebar3
     export PATH=$PATH:your-current-directory
 
+To clean:
+
+    $ rebar3 clean
+
 To compile:
 
     $ rebar3 compile
 
-To run:
+To open shell so we can run the below instructions:
 
     $ rebar3 shell
 
+### Instructions
 
+Create a user account:
 
+    User = bank_server:create_account().
 
+Show the user's balance / transactions:
 
+    bank_server:show_balance(User).
+    bank_server:show_transactions(User).
+
+Make a payment out of their bank account:
+
+    bank_server:pay(User, 21).
+
+Withdraw cash from their bank account:
+
+    bank_server:withdraw(User, 5).
+
+Deposit money into their bank account:
+
+    bank_server:deposit(User, 135).
+
+Create another account to transfer money to:
+
+    User1 = bank_server:create_account().
+    bank_server:transfer(User, User1, 30). 
+
+Check final balance of users and list of transactions:
+    
+    bank_server:show_balance(User).
+    bank_server:show_transactions(User).
+    
+    bank_server:show_balance(User1).
+    bank_server:show_transactions(User1).
+
+# Future improvements
+* unit tests
+* Add a unique username or userid for each created user
+* validate inputs (check the input passed in the functions are the correct type)
+* use lager library for print statements instead of io:format
