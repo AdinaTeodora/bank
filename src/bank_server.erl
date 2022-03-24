@@ -2,7 +2,14 @@
 %%% @author teodoraardeleanu
 %%% @copyright (C) 2022, <COMPANY>
 %%% @doc
-%%%
+%%% A bank server that allows user account creation and user actions such as:
+%%% - view their balance
+%%% - view their transactions
+%%% - pay/get charged
+%%% - withdraw money
+%%% - deposit
+%%% - transfer to other users
+
 %%% @end
 %%% Created : 23. Mar 2022 14:53
 %%%-------------------------------------------------------------------
@@ -12,13 +19,14 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, balance/0, transactions/0, charge/1, withdraw/1, deposit/1]).
+-export([start_link/0]).
+-export([create_account/0, show_balance/1, show_transactions/1, transfer/3, pay/2, withdraw/2, deposit/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -type amount() :: integer().
--type action() :: charge | withdraw | deposit.
+-type action() :: charge | withdraw | deposit | transfer | received.
 
 %% Default user's initial balance to 100 Bambeuros due to promotion on signup.
 -record(account, {
@@ -27,34 +35,82 @@
 }).
 
 %%%===================================================================
-%%% API
+%%% External API functions
 %%%===================================================================
 
-%% @doc Start / Create a bank account for a user.
-
+%% @private
+%% @doc Starts up the bank process.
 start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
--spec balance() -> Balance :: amount().
-balance() ->
-  gen_server:call(?MODULE, balance).
+%% @private
+%% @doc Creates a user account by starting up a process.
+create_account() ->
+  {ok, Pid} = gen_server:start_link(?MODULE, [], []),
+  io:format("Congratulations, you have received 100 free Bambeuros for signing up with us!~n"),
+  Pid.
 
--spec transactions() -> Transactions :: [{action(), amount()}].
-transactions() ->
-  io:format("Showing transactions in order of most recent: ~n"),
-  gen_server:call(?MODULE, transactions).
+%% @private
+%% @doc Shows the user's balance.
+show_balance(UserPid) ->
+  Balance = gen_server:call(UserPid, balance),
+  io:format("Balance stands at ~p.~n", [Balance]).
 
--spec charge(amount()) -> Balance :: amount().
-charge(Amount) ->
-  gen_server:call(?MODULE, {charge, Amount}).
+%% @private
+%% @doc Shows the user's list of transactions.
+show_transactions(UserPid) ->
+  Transactions = gen_server:call(UserPid, transactions),
+  case Transactions of
+    empty ->
+      io:format("No transactions were made. ~n");
+    Transactions1 ->
+      io:format("Showing transactions in order of most recent: ~n"),
+      lists:foreach(fun({Action, Amount}) -> io:format("~p -> ~p Bambeuros;~n", [Action, Amount]) end, Transactions1)
+  end.
 
--spec withdraw(amount()) -> Balance :: amount().
-withdraw(Amount) ->
-  gen_server:call(?MODULE, {withdraw, Amount}).
+%% @private
+%% @doc Transfers money to a different user.
+transfer(User, User1, Amount) ->
+  {NewAmount, NewBalance} = gen_server:call(User, {transfer, User1, Amount}),
+  case NewAmount of
+    0 ->
+      io:format("Transaction denied! Not enough funds in the bank account. Balance stands at ~p~n", [NewBalance]);
+    PosAmount ->
+      io:format("Transferred ~p Bambeuros to User: ~p. Balance now stands at ~p.~n", [PosAmount, User1, NewBalance])
+  end.
 
--spec deposit(amount()) -> Balance :: amount().
-deposit(Amount) ->
-  gen_server:call(?MODULE, {deposit, Amount}).
+%% @private
+%% @doc Makes a payment out of the user's bank account.
+pay(User, Amount) ->
+  {NewAmount, NewBalance} = gen_server:call(User, {pay, Amount}),
+  case NewAmount of
+    0 ->
+      io:format("Transaction denied! Not enough funds in the bank account. Balance stands at ~p~n", [NewBalance]);
+    PosAmount ->
+      io:format("Charged ~p Bambeuros. Balance now stands at ~p.~n", [PosAmount, NewBalance])
+  end.
+
+%% @private
+%% @doc Withdraws moeny out of the user's bank account.
+withdraw(User, Amount) ->
+  {NewAmount, NewBalance} = gen_server:call(User, {withdraw, Amount}),
+  case NewAmount of
+    0 ->
+      io:format("Transaction denied! Not enough funds in the bank account. Balance stands at ~p~n", [NewBalance]);
+    PosAmount ->
+      io:format("Withdrew ~p Bambeuros. Balance now stands at ~p.~n", [PosAmount, NewBalance])
+  end.
+
+%% @private
+%% @doc Makes a deposit to the user's bank account.
+deposit(User, Amount) ->
+  {NewAmount, NewBalance} = gen_server:call(User, {deposit, Amount}),
+  case NewAmount of
+    0 ->
+      io:format("Transaction denied! Not enough funds in the bank account. Balance stands at ~p~n", [NewBalance]);
+    PosAmount ->
+      io:format("Deposited ~p Bambeuros. Balance now stands at ~p.~n", [PosAmount, NewBalance])
+  end.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -68,42 +124,62 @@ init([]) ->
 %% @private
 %% @doc Handling call messages
 handle_call(balance, _From, Account = #account{balance = Balance}) ->
-  {reply, io:format("Balance is at ~p.~n", [Balance]), Account};
+  {reply, Balance, Account};
+
 handle_call(transactions, _From, Account = #account{transactions = []}) ->
-  {reply, io:format("No transactions made yet.~n"), Account};
+  {reply, empty, Account};
 handle_call(transactions, _From, Account = #account{transactions = Transactions}) ->
-  FormattedTransactions = lists:foreach(fun({Action, Amount}) ->
-    io:format("~p -> ~p Bambeuros;~n", [Action, Amount])
-  end, Transactions),
-  {reply, FormattedTransactions, Account};
-handle_call({charge, Amount}, _From, Account) when Amount =< 0 ->
-  {reply, 0, Account};
-handle_call({charge, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
-  case Balance > Amount of
-    true  ->
-      NewAccount = Account#account{balance = Balance - Amount, transactions = [{charge, Amount} | Transactions]},
+  {reply, Transactions, Account};
+
+handle_call({transfer, OtherUser, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
+  case Balance >= Amount of
+    true ->
+      NewAccount = Account#account{balance = Balance - Amount, transactions = [{transfer, Amount} | Transactions]},
       NewBalance = NewAccount#account.balance,
-      {reply, io:format("Charged ~p Bambeuros, balance is now at ~p.~n", [Amount, NewBalance]), NewAccount};
+      received(OtherUser, Amount),
+      {reply, {Amount, NewBalance}, NewAccount};
     false ->
-      {reply, 0, Account}
+      {reply, {0, Balance}, Account}
   end;
+
+handle_call({pay, Amount}, _From, Account) when Amount =< 0 ->
+  {reply, 0, Account};
+handle_call({pay, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
+  case Balance >= Amount of
+    true  ->
+      NewAccount = Account#account{balance = Balance - Amount, transactions = [{pay, Amount} | Transactions]},
+      NewBalance = NewAccount#account.balance,
+      {reply, {Amount, NewBalance}, NewAccount};
+    false ->
+      {reply, {0, Balance}, Account}
+  end;
+
 handle_call({withdraw, Amount}, _From, Account) when Amount =< 0 ->
   {reply, 0, Account};
 handle_call({withdraw, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
-  case Balance > Amount of
+  case Balance >= Amount of
     true  ->
       NewAccount = Account#account{balance = Balance - Amount, transactions = [{withdraw, Amount} | Transactions]},
       NewBalance = NewAccount#account.balance,
-      {reply, io:format("Withdrawn ~p Bambeuros, balance is now at ~p.~n", [Amount, NewBalance]), NewAccount};
+      {reply, {Amount, NewBalance}, NewAccount};
     false ->
-      {reply, Balance, #account{}}
+      {reply, {Amount, Balance}, #account{}}
   end;
+
 handle_call({deposit, Amount}, _From, Account) when Amount =< 0 ->
   {reply, 0, Account};
 handle_call({deposit, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
   NewAccount = Account#account{balance = Balance + Amount, transactions = [{deposit, Amount} | Transactions]},
   NewBalance = NewAccount#account.balance,
-  {reply, io:format("Deposited ~p Bambeuros, balance is now at ~p.~n", [Amount, NewBalance]), NewAccount};
+  {reply, {Amount, NewBalance}, NewAccount};
+
+handle_call({received, Amount}, _From, Account) when Amount =< 0 ->
+  {reply, 0, Account};
+handle_call({received, Amount}, _From, Account = #account{balance = Balance, transactions = Transactions}) ->
+  NewAccount = Account#account{balance = Balance + Amount, transactions = [{received, Amount} | Transactions]},
+  NewBalance = NewAccount#account.balance,
+  {reply, {Amount, NewBalance}, NewAccount};
+
 handle_call(_Request, _From, State = #account{}) ->
   {reply, ok, State}.
 
@@ -129,3 +205,12 @@ terminate(_Reason, _State = #account{}) ->
 %% @doc Convert process account when code is changed
 code_change(_OldVsn, Account = #account{}, _Extra) ->
   {ok, Account}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
+
+%% Receives money from another user.
+received(User, Amount) ->
+  {NewAmount, NewBalance} = gen_server:call(User, {received, Amount}),
+  io:format("User ~p Received ~p Bambeuros. Balance now stands at ~p.~n", [User, NewAmount, NewBalance]).
